@@ -99,6 +99,9 @@ class ReportsController {
     async create(req, res, next) {
         try {
             const { reportName } = req.body;
+            if (!reportName || typeof reportName !== 'string' || reportName.trim().length === 0) {
+                next(ApiError.badRequest("Имя отчета заполнено неверно или не заполнено вовсе"));
+            }
             let { reportId, location, locationTrash } = await saveRepToDB(Report, reportName, uploadsDir);
 
             // Используем хелперы для создания директории и файла
@@ -178,6 +181,9 @@ class ReportsController {
     async getOne(req, res, next) {
         try {
             const { idReport } = req.params;
+            if (!idReport || isNaN(parseInt(idReport, 10))) {
+                next(ApiError.badRequest("Неверный id отчета"));
+            }
             const {reportTrashSource, reportSource} = await getSourceRepByRepId(idReport);
             const data = await fs.promises.readFile(reportSource, 'utf-8');
             const dataTrash = await fs.promises.readFile(reportTrashSource, 'utf-8');
@@ -197,6 +203,9 @@ class ReportsController {
     async save(req, res, next) {
         try {
             const { idReport } = req.params;
+            if (!idReport || isNaN(parseInt(idReport, 10))) {
+                next(ApiError.badRequest("Неверный id отчета"));
+            }
             const { report, trash } = req.body;
             const { reportTrashSource, reportSource } = await getSourceRepByRepId(idReport);
             if (!(Array.isArray(report) && areAllElementsJSON(report))) {
