@@ -1,5 +1,5 @@
 const ApiError = require('../error/ApiError');
-const {User_Reports} = require('../models/models')
+const {User_Reports, User} = require('../models/models')
 const {Source} = require('../models/models')
 const {Report} = require('../models/models')
 const fs = require('fs')
@@ -8,8 +8,9 @@ const archiver = require('archiver')
 const convertCsvToJson = require("../utils/convertCsvToJson/convertCsvToJson");
 const createDirectoryIfPathNotFound = require("../utils/createDirectoryIfPathNotFound/createDirectoryIfPathNotFound")
 const saveJsonToFile = require("../utils/saveJsonToFile/saveJsonToFile")
+const getReportsByUserId = require("../methodsToDB/getReportsByUserId/getReportsByUserId");
+const getSourceRepByRepId = require("../methodsToDB/getSourceRepByRepId");
 class ReportsController {
-
     async uploadCSV(req, res, next) {
         if (!req.files || !req.files.file || path.extname(req.files.file.name).toLowerCase() !== '.csv') {
             return res.status(400).send('Пожалуйста, загрузите CSV файл.');
@@ -17,6 +18,10 @@ class ReportsController {
 
         const file = req.files.file;
         const jsonFileName = path.basename(file.name, '.csv') + '.json';
+        const allReps = await getReportsByUserId(1)
+        if (isReportExists(getNameFromReports(allReps, jsonFileName))) {
+            return res.status(400).send('Данное название уже есть');
+        }
         const uploadsDir = path.join(__dirname, '..', 'uploads'); // Определяем директорию uploads
         const jsonOutputPath = path.join(uploadsDir, jsonFileName); // Определяем путь для сохранения JSON файла
 
@@ -25,18 +30,19 @@ class ReportsController {
             await createDirectoryIfPathNotFound(uploadsDir);
 
             // Преобразуем CSV в JSON и сохраняем результат
-            convertCsvToJson(file.data, (err, jsonData) => {
+            convertCsvToJson(file.data, async (err, jsonData) => {
                 if (err) {
                     console.error('Ошибка обработки CSV:', err);
                     return res.status(500).send('Ошибка обработки CSV');
                 }
 
                 // Сохраняем JSON данные в файл
-                saveJsonToFile(jsonData, jsonOutputPath, (err, message) => {
+                saveJsonToFile(jsonData, jsonOutputPath, async (err, message) => {
                     if (err) {
                         console.error('Ошибка записи JSON:', err);
                         return res.status(500).send('Ошибка на стороне сервера');
                     }
+                    await saveRepToDB(Report, jsonFileName, jsonOutputPath)
                     res.status(200).send(message);
                 });
             });
@@ -51,12 +57,14 @@ class ReportsController {
         if (!req.files || !req.files.file) {
             return res.status(400).send('Пожалуйста, загрузите JSON файл.');
         }
-
         const file = req.files.file;
         const jsonFileName = file.name;
         const uploadsDir = path.join(__dirname, '..', 'uploads'); // Определяем директорию uploads
         const jsonOutputPath = path.join(uploadsDir, jsonFileName); // Определяем путь для сохранения JSON файла
-
+        const allReps = await getReportsByUserId(1)
+        if (isReportExists(getNameFromReports(allReps, jsonFileName))) {
+            return res.status(400).send('Данное название уже есть');
+        }
 
         try {
             await createDirectoryIfPathNotFound(uploadsDir);
@@ -64,10 +72,11 @@ class ReportsController {
             const jsonData = JSON.parse(file.data.toString());
 
             // Сохраняем JSON данные в файл
-            saveJsonToFile(jsonData, jsonOutputPath, (err, message) => {
+            saveJsonToFile(jsonData, jsonOutputPath, async (err, message) => {
                 if (err) {
                     return res.status(500).send('Ошибка на стороне сервера');
                 }
+                await saveRepToDB(Report, jsonFileName, jsonOutputPath)
                 res.status(200).send(message);
             });
         } catch (error) {
@@ -123,7 +132,7 @@ class ReportsController {
 
     }
 
-    async getAll(req, res, next) {
+    /*async getAll(req, res, next) {
         const allReport = []
         const allReportsWithoutLimit = []
         const allReportsWithoutLimitObject = []
@@ -163,20 +172,38 @@ class ReportsController {
             next(ApiError.badRequest(e.message))
         }
 
+    }*/
+    async getAll(req, res, next) {
+        let {limit, page} = req.query
+        page = page || 1
+        limit = limit || 9
+        let offset = page * limit - limit
+        const all = await getReportsByUserId(1, limit, offset)
+        try {
+            res.json(all)
+        } catch (e) {
+            next(ApiError.badRequest(e.message))
+        }
+
     }
+
+
     async getOne(req, res, next) {
         try {
-            const {userId, ReportId, nameReport} = req.params;
-            const reportPath = path.join(__dirname, '..', 'static', userId, nameReport);
+            const { idReport } = req.params;
+            const path = getSourceRepByRepId(idReport);
+            const data = await fs.promises.readFile(path, 'utf-8');
 
+            // Преобразуем в JSON
+            const jsonData = JSON.parse(data);
 
-            let content = fs.readFileSync(reportPath, 'utf-8')
-
-            res.json({ content });
+            // Отправляем JSON-ответ
+            return res.json(jsonData);
         } catch (e) {
-            next(ApiError.badRequest(e.message));
+            return next(ApiError.badRequest(e.message));
         }
     }
+
 
     async save(req, res, next) {
         try {
@@ -234,6 +261,21 @@ class ReportsController {
             next(ApiError.badRequest(e.message))
         }
     }
+}
+
+function getNameFromReports(reports, name) {
+    return reports.filter(report=>report.name===name);
+}
+
+function isReportExists(callback) {
+    return callback.length !== 0
+}
+
+async function saveRepToDB(report, jsonFileName, jsonOutputPath) {
+    const Report = await report.create({name: jsonFileName})
+    const ReportId = Report.dataValues.idReport;
+    const srcReport = await Source.create({reportIdReport: ReportId, location: jsonOutputPath})
+    const userReports = await User_Reports.create({userId: 1, ReportIdReport: ReportId})
 }
 
 module.exports = new ReportsController()

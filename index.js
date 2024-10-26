@@ -26,6 +26,29 @@ app.use(errorHandler)
 const sequelize = require('./db')
 
 const models = require('./models/models')
+//для заглушки
+const { User } = require('./models/models');
+const checkAndCreateDefaultUser = async () => {
+    try {
+        const user = await User.findByPk(1); // Ищем пользователя с id 1
+        if (!user) {
+            // Если пользователя с таким id нет, создаем нового
+            await User.create({
+                email: 'test',
+                password: 'test',
+                role: 'user',
+                fio: 'test',
+                profilePhoto: null,
+            });
+            console.log('Default user created with id 1');
+        } else {
+            console.log('User with id 1 already exists');
+        }
+    } catch (error) {
+        console.error('Error checking or creating default user:', error);
+    }
+};
+
 
 const start = async () => {
     try {
@@ -34,6 +57,7 @@ const start = async () => {
             .then(() => {
                 console.log('Database & tables updated!');
             }); //синхрон бд с схемой данных
+        await checkAndCreateDefaultUser();
         app.listen(PORT, () => {console.log(`Server started on port ${PORT}`)})
     } catch (e) {
 
