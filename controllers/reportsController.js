@@ -1,7 +1,6 @@
 const ApiError = require('../error/ApiError');
-const {User_Reports, User} = require('../models/models')
+const {User_Reports, User, Report} = require('../models/models')
 const {Source} = require('../models/models')
-const {Report} = require('../models/models')
 const fs = require('fs')
 const path = require('path')
 const archiver = require('archiver')
@@ -10,24 +9,30 @@ const createDirectoryIfPathNotFound = require("../utils/createDirectoryIfPathNot
 const saveJsonToFile = require("../utils/saveJsonToFile/saveJsonToFile")
 const getReportsByUserId = require("../methodsToDB/getReportsByUserId/getReportsByUserId");
 const getSourceRepByRepId = require("../methodsToDB/getSourceRepByRepId");
+const uploadsDir = path.join(__dirname, '..', 'uploads');
 class ReportsController {
     async uploadCSV(req, res, next) {
-        if (!req.files || !req.files.file || path.extname(req.files.file.name).toLowerCase() !== '.csv') {
-            return res.status(400).send('Пожалуйста, загрузите CSV файл.');
-        }
-
-        const file = req.files.file;
-        const jsonFileName = path.basename(file.name, '.csv') + '.json';
-        const allReps = await getReportsByUserId(1)
-        if (isReportExists(getNameFromReports(allReps, jsonFileName))) {
-            return res.status(400).send('Данное название уже есть');
-        }
-        const uploadsDir = path.join(__dirname, '..', 'uploads'); // Определяем директорию uploads
-        const jsonOutputPath = path.join(uploadsDir, jsonFileName); // Определяем путь для сохранения JSON файла
-
         try {
+            if (!req.files || !req.files.file || path.extname(req.files.file.name).toLowerCase() !== '.csv') {
+                return res.status(400).send('Пожалуйста, загрузите CSV файл.');
+            }
+            const {idReport} = req.params
+            const file = req.files.file;
+            const jsonFileName = path.basename(file.name, '.csv') + '.json';
+            /*const allReps = await getReportsByUserId(1)*/
+            const uploadsDir = path.join(__dirname, '..', 'uploads'); // Определяем директорию uploads
+
             // Проверяем и создаём папку, если её нет
             await createDirectoryIfPathNotFound(uploadsDir);
+            const pathToRep = path.join(uploadsDir, idReport)
+            await createDirectoryIfPathNotFound(path.join(pathToRep));//потом исключение написать
+            const allReps = getFilesInDirectory(pathToRep)
+            if (isReportExists(getNameFromReports(allReps, jsonFileName))) {
+                return res.status(400).send('Данное название уже есть');
+            }
+
+            const jsonOutputPath = path.join(uploadsDir, idReport, jsonFileName); // Определяем путь для сохранения JSON файла
+
 
             // Преобразуем CSV в JSON и сохраняем результат
             convertCsvToJson(file.data, async (err, jsonData) => {
@@ -42,7 +47,7 @@ class ReportsController {
                         console.error('Ошибка записи JSON:', err);
                         return res.status(500).send('Ошибка на стороне сервера');
                     }
-                    await saveRepToDB(Report, jsonFileName, jsonOutputPath)
+                    /*await saveRepToDB(Report, jsonFileName, jsonOutputPath)*/
                     res.status(200).send(message);
                 });
             });
@@ -54,82 +59,64 @@ class ReportsController {
 
     // Контроллер для загрузки JSON файла
     async uploadJSON(req, res, next) {
-        if (!req.files || !req.files.file) {
-            return res.status(400).send('Пожалуйста, загрузите JSON файл.');
-        }
-        const file = req.files.file;
-        const jsonFileName = file.name;
-        const uploadsDir = path.join(__dirname, '..', 'uploads'); // Определяем директорию uploads
-        const jsonOutputPath = path.join(uploadsDir, jsonFileName); // Определяем путь для сохранения JSON файла
-        const allReps = await getReportsByUserId(1)
-        if (isReportExists(getNameFromReports(allReps, jsonFileName))) {
-            return res.status(400).send('Данное название уже есть');
-        }
-
         try {
-            await createDirectoryIfPathNotFound(uploadsDir);
+            if (!req.files || !req.files.file) {
+                return res.status(400).send('Пожалуйста, загрузите JSON файл.');
+            }
+            const {idReport} = req.params
+
+            const file = req.files.file;
+            const jsonFileName = file.name;
+
+            const pathToRep = path.join(uploadsDir, idReport)
+            await createDirectoryIfPathNotFound(path.join(pathToRep));//потом исключение написать
+            const jsonOutputPath = path.join(uploadsDir, idReport,  jsonFileName);
+            /*const allReps = await getReportsByUserId(1);*/
+            const allReps = getFilesInDirectory(pathToRep)
+
+            if (isReportExists(getNameFromReports(allReps, jsonFileName))) {
+                return res.status(400).send('Данное название уже есть');
+            }
+
+
             // Читаем содержимое файла
             const jsonData = JSON.parse(file.data.toString());
 
-            // Сохраняем JSON данные в файл
-            saveJsonToFile(jsonData, jsonOutputPath, async (err, message) => {
-                if (err) {
-                    return res.status(500).send('Ошибка на стороне сервера');
-                }
-                await saveRepToDB(Report, jsonFileName, jsonOutputPath)
-                res.status(200).send(message);
-            });
+            // Сохраняем JSON данные в файл с использованием промиса
+            await saveJsonToFile(jsonData, jsonOutputPath);
+
+            /*// Сохраняем данные в базу данных
+            await saveRepToDB(Report, jsonFileName, jsonOutputPath);*/
+
+            // Отправляем ответ только после успешного завершения всех операций
+            res.status(200).send('Файл успешно загружен и данные сохранены.');
         } catch (error) {
             console.error('Ошибка обработки JSON:', error);
             return res.status(400).send('Неверный формат JSON файла.');
         }
     }
+
     async create(req, res, next) {
         try {
-            // Получаем путь текущей рабочей папки
-            const currentDirectory = path.resolve();
-            const parentFolderPath = path.resolve(currentDirectory, 'static');
-            const userId = req.user.id.toString()
+            const { reportName } = req.body;
+            let { reportId, location, locationTrash } = await saveRepToDB(Report, reportName, uploadsDir);
 
-            const {name, reportName} = req.body
+            // Используем хелперы для создания директории и файла
+            ensureDirExists(location);
 
-            const fileName = reportName;
-            const folderName = name
-            const fileContent = ''
-            let folderNameWithUserId = path.join(parentFolderPath, userId);
+            const reportFile = path.join(location, 'report.json');
+            ensureFileExists(reportFile);
 
-            if (!fs.existsSync(folderNameWithUserId)) {
-                await fs.promises.mkdir(folderNameWithUserId);
-            }
 
-            folderNameWithUserId = path.join(parentFolderPath, userId, folderName);
-            // Полный путь к файлу
-            const filePath = path.join(folderNameWithUserId, fileName);
+            ensureDirExists(locationTrash);
 
-            if (!fs.existsSync(folderNameWithUserId)) {
-                await fs.promises.mkdir(folderNameWithUserId);
-                console.log(`Папка отчета ${name} создана`);
-            } else {
-                return res.status(500).json({message: 'Отчет уже создан1'})
-            }
+            const trashFile = path.join(locationTrash, 'trash.json');
+            ensureFileExists(trashFile);
 
-            if (!fs.existsSync(filePath)) {
-                fs.writeFile(filePath, fileContent, (err) => {
-                    console.log('Отчет успешно создан');
-                });
-            } else {
-                return res.status(500).json({message: 'отчет уже создан2'})
-            }
-
-            const Report = await Report.create({name})
-            const ReportId = Report.dataValues.idReport;
-            const srcReport = await Source.create({reportIdReport: ReportId, location: filePath})
-            const userReports = await User_Reports.create({userId: userId, ReportIdReport: ReportId})
-            res.json({message: 'Файлы и папки созданы и успешно занесены в бд'})
+            res.status(200).json(reportId);
         } catch (e) {
-            next(ApiError.badRequest(e.message))
+            next(ApiError.badRequest(e.message));
         }
-
     }
 
     /*async getAll(req, res, next) {
@@ -191,14 +178,16 @@ class ReportsController {
     async getOne(req, res, next) {
         try {
             const { idReport } = req.params;
-            const path = getSourceRepByRepId(idReport);
-            const data = await fs.promises.readFile(path, 'utf-8');
+            const {reportTrashSource, reportSource} = await getSourceRepByRepId(idReport);
+            const data = await fs.promises.readFile(reportSource, 'utf-8');
+            const dataTrash = await fs.promises.readFile(reportTrashSource, 'utf-8');
 
             // Преобразуем в JSON
             const jsonData = JSON.parse(data);
+            const jsonDataTrash = JSON.parse(dataTrash);
 
             // Отправляем JSON-ответ
-            return res.json(jsonData);
+            return res.json({report:jsonData, trash: jsonDataTrash});
         } catch (e) {
             return next(ApiError.badRequest(e.message));
         }
@@ -207,15 +196,32 @@ class ReportsController {
 
     async save(req, res, next) {
         try {
-            const {userId, nameReport} = req.params;
-            const {report} = req.files
-            const fileExtension = report.name;
-            const ReportPath = path.join(__dirname, '..', 'static', userId, fileExtension);
+            const { idReport } = req.params;
+            const { report, trash } = req.body;
+            const { reportTrashSource, reportSource } = await getSourceRepByRepId(idReport);
+            if (!(Array.isArray(report) && areAllElementsJSON(report))) {
+                return next(ApiError.badRequest('Неверный формат Отчета'));
+            }
+            if (!(Array.isArray(trash) && areAllElementsJSON(trash))) {
+                return next(ApiError.badRequest('Неверный формат Корзины'));
+            }
 
-            await report.mv(path.resolve(ReportPath))
 
-            res.status(200).send({ message: 'Отчет успешно сохранен!' });
+            // Сохраняем JSON данных в файлы
+            try {
+                await fs.promises.writeFile(reportSource, JSON.stringify(report, null, 2), 'utf-8');
+            } catch (e) {
+                return next(ApiError.badRequest('Не удалось сохранить JSON Отчета'));
+            }
 
+            try {
+                await fs.promises.writeFile(reportTrashSource, JSON.stringify(trash, null, 2), 'utf-8');
+            } catch (e) {
+                return next(ApiError.badRequest('Не удалось сохранить JSON Корзины'));
+            }
+
+            // Успешный ответ
+            res.status(200).json({ message: 'Данные успешно сохранены' });
         } catch (e) {
             next(ApiError.badRequest(e.message))
         }
@@ -268,14 +274,66 @@ function getNameFromReports(reports, name) {
 }
 
 function isReportExists(callback) {
-    return callback.length !== 0
+    return callback.length === 0
 }
 
 async function saveRepToDB(report, jsonFileName, jsonOutputPath) {
     const Report = await report.create({name: jsonFileName})
-    const ReportId = Report.dataValues.idReport;
-    const srcReport = await Source.create({reportIdReport: ReportId, location: jsonOutputPath})
-    const userReports = await User_Reports.create({userId: 1, ReportIdReport: ReportId})
+    const reportId = Report.dataValues.idReport;
+    const location = path.join(jsonOutputPath, reportId.toString(), 'report')
+    const locationTrash = path.join(jsonOutputPath, reportId.toString(), 'trash')
+    const srcReport = await Source.create({reportIdReport: reportId, location, locationTrash})
+    const userReports = await User_Reports.create({userId: 1, reportIdReport: reportId})
+    return {reportId, location, locationTrash}
+}
+
+function getFilesInDirectory(directoryPath) {
+    try {
+        // Читаем содержимое директории
+        const files = fs.readdirSync(directoryPath);
+
+        // Возвращаем массив названий файлов
+        return files;
+    } catch (error) {
+        console.error('Ошибка чтения директории:', error);
+        return [];
+    }
+}
+
+// Хелпер для создания директории, если она не существует
+function ensureDirExists(dirPath) {
+    if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+        console.log(`Директория создана: ${dirPath}`);
+    } else {
+        console.log(`Директория уже существует: ${dirPath}`);
+    }
+}
+
+// Хелпер для создания файла, если он не существует
+function ensureFileExists(filePath) {
+    if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, '{}');
+        console.log(`Файл создан: ${filePath}`);
+    } else {
+        console.log(`Файл уже существует: ${filePath}`);
+    }
+}
+
+function areAllElementsJSON(array) {
+    return array.every(item => {
+        // Проверяем, что элемент - объект и не null
+        if (typeof item === 'object' && item !== null) {
+            try {
+                // Пробуем преобразовать объект в строку JSON
+                JSON.stringify(item);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+        return false;
+    });
 }
 
 module.exports = new ReportsController()

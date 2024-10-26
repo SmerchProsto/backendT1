@@ -18,32 +18,22 @@ const User_Reports = sequelize.define('user_reports', {
 
 const Report = sequelize.define('reports', {
     idReport: {type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true},
-    name: {type: DataTypes.STRING, unique: true}
+    name: {type: DataTypes.STRING}
 })
+
 
 const Source = sequelize.define('srcs', {
     idSrc: {type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true},
     reportIdReport: {type: DataTypes.INTEGER, allowNull: false},
-    location: {type: DataTypes.STRING, allowNull: false}
+    location: {type: DataTypes.STRING, allowNull: false},
+    locationTrash: {type: DataTypes.STRING, allowNull: false}
 })
 
 
 User.belongsToMany(Report, {through: User_Reports})
-/*User.associate = function(models) {
-    User.belongsToMany(Report,{
-        through: User_Reports,
-        foreignkey:'userId',
-        as: 'userRep'
-    })
-};*/
+
 Report.belongsToMany(User, {through: User_Reports})
-/*Report.associate = function(models) {
-    Report.belongsToMany(User,{
-        through: User_Reports,
-        foreignkey:'reportIdReport',
-        as: 'repUser'
-    })
-};*/
+
 Report.hasMany(Source)
 Source.belongsTo(Report)
 
